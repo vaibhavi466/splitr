@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server"; // ✅ Import both mutation & query
+import { mutation, query } from "./_generated/server"; 
 import { v } from "convex/values";
 
 // ──────────────── 1. Store new user (if not exists) ────────────────
@@ -8,12 +8,12 @@ export const store = mutation({
     const identity = await ctx.auth.getUserIdentity();
 
     if (!identity) {
-      console.log("❌ No identity found");
+      console.log("No identity found");
       throw new Error("Called storeUser without authentication");
     }
 
     const { subject, email, name, picture } = identity;
-    console.log("✅ Identity:", { subject, email, name, picture });
+    console.log("Identity:", { subject, email, name, picture });
 
     const existingUser = await ctx.db
       .query("users")
@@ -21,7 +21,7 @@ export const store = mutation({
       .unique();
 
     if (existingUser) {
-      console.log("ℹ️ User already exists");
+      console.log("User already exists");
       return existingUser._id;
     }
 
@@ -32,7 +32,7 @@ export const store = mutation({
       imageUrl: picture,
     });
 
-    console.log("✅ New user inserted:", newUserId);
+    console.log("New user inserted:", newUserId);
     return newUserId;
   },
 });

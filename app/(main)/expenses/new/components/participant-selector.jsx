@@ -65,12 +65,12 @@ export function ParticipantSelector({ participants, onParticipantsChange }) {
             variant="secondary"
             className="flex items-center gap-2 px-3 py-2"
           >
-            <Avatar className="h-5 w-5">
-              <AvatarImage src={participant.imageUrl} />
-              <AvatarFallback>
-                {participant.name?.charAt(0) || "?"}
-              </AvatarFallback>
-            </Avatar>
+          <Avatar className="h-5 w-5">
+            <AvatarImage src={participant.imageUrl} />
+            <AvatarFallback>
+              {participant.name?.charAt(0) || "?"}
+            </AvatarFallback>
+          </Avatar>
             <span>
               {participant.id === currentUser?._id
                 ? "You"
@@ -82,7 +82,7 @@ export function ParticipantSelector({ participants, onParticipantsChange }) {
                 onClick={() => removeParticipant(participant.id)}
                 className="ml-1 text-muted-foreground hover:text-foreground"
               >
-                <X className="h-3 w-3" />
+              <X className="h-3 w-3" />
               </button>
             )}
           </Badge>
