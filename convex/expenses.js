@@ -22,6 +22,14 @@ export const createExpense = mutation({
     notes: v.optional(v.string()),
     receiptUrl: v.optional(v.string()),
     currency: v.optional(v.string()),
+    payments: v.optional(
+      v.array(
+        v.object({
+          userId: v.id("users"),
+          amount: v.number(),
+        })
+      )
+    ),
   },
   handler: async (ctx, args) => {
     // Use centralized getCurrentUser function
@@ -45,6 +53,29 @@ export const createExpense = mutation({
       if (!isMember) {
         throw new Error("You are not a member of this group");
       }
+    }
+
+    // Validate payments if provided
+    let finalPayments = undefined;
+    if (args.payments && args.payments.length > 0) {
+      let paymentsCents = 0;
+      for (const p of args.payments) {
+        if (p.amount <= 0) {
+          throw new Error("Payment amounts must be positive numbers greater than zero");
+        }
+        const amt = Math.round(p.amount * 100) / 100;
+        paymentsCents += Math.round(amt * 100);
+      }
+      const totalCents = Math.round(args.amount * 100);
+      if (paymentsCents !== totalCents) {
+        throw new Error(
+          `Payment amounts sum (₹${(paymentsCents / 100).toFixed(2)}) must exactly equal the total expense amount (₹${(totalCents / 100).toFixed(2)})`
+        );
+      }
+      finalPayments = args.payments.map((p) => ({
+        userId: p.userId,
+        amount: Math.round(p.amount * 100) / 100,
+      }));
     }
 
     // Validate each split and compute exact sum using integer cents to prevent floating point inaccuracies
@@ -82,6 +113,7 @@ export const createExpense = mutation({
       notes: args.notes,
       receiptUrl: args.receiptUrl,
       currency: args.currency || "INR",
+      payments: finalPayments,
       createdBy: user._id,
     });
 
@@ -159,13 +191,22 @@ export const getExpensesBetweenUsers = query({
     let balance = 0;
 
     for (const e of expenses) {
-      if (e.paidByUserId === me._id) {
-        const split = e.splits.find((s) => s.userId === userId && !s.paid);
-        if (split) balance += split.amount; // they owe me
-      } else {
-        const split = e.splits.find((s) => s.userId === me._id && !s.paid);
-        if (split) balance -= split.amount; // I owe them
+      let myPaid = 0;
+      if (e.payments && e.payments.length > 0) {
+        const p = e.payments.find((py) => py.userId === me._id);
+        if (p) myPaid = p.amount;
+      } else if (e.paidByUserId === me._id) {
+        myPaid = e.amount;
       }
+
+      const mySplit = e.splits.find((s) => s.userId === me._id);
+      const myShare = mySplit ? mySplit.amount : 0;
+
+      // net change for me: how much I paid minus my share of this expense.
+      // E.g. If total expense is ₹1200, myShare is ₹600:
+      // - If I paid ₹700 (and B paid ₹500), myPaid - myShare = 700 - 600 = +100 (B owes me ₹100).
+      // - If I paid ₹300 (and B paid ₹900), myPaid - myShare = 300 - 600 = -300 (I owe B ₹300).
+      balance += (myPaid - myShare);
     }
 
     for (const s of settlements) {
@@ -272,6 +313,14 @@ export const editExpense = mutation({
     notes: v.optional(v.string()),
     receiptUrl: v.optional(v.string()),
     currency: v.optional(v.string()),
+    payments: v.optional(
+      v.array(
+        v.object({
+          userId: v.id("users"),
+          amount: v.number(),
+        })
+      )
+    ),
   },
   handler: async (ctx, args) => {
     const user = await ctx.runQuery(api.users.getCurrentUser);
@@ -290,6 +339,29 @@ export const editExpense = mutation({
     // Validate new amount
     if (args.amount <= 0) {
       throw new Error("Expense amount must be a positive number greater than zero");
+    }
+
+    // Validate payments if provided
+    let finalPayments = undefined;
+    if (args.payments && args.payments.length > 0) {
+      let paymentsCents = 0;
+      for (const p of args.payments) {
+        if (p.amount <= 0) {
+          throw new Error("Payment amounts must be positive numbers greater than zero");
+        }
+        const amt = Math.round(p.amount * 100) / 100;
+        paymentsCents += Math.round(amt * 100);
+      }
+      const totalCents = Math.round(args.amount * 100);
+      if (paymentsCents !== totalCents) {
+        throw new Error(
+          `Payment amounts sum (₹${(paymentsCents / 100).toFixed(2)}) must exactly equal the total expense amount (₹${(totalCents / 100).toFixed(2)})`
+        );
+      }
+      finalPayments = args.payments.map((p) => ({
+        userId: p.userId,
+        amount: Math.round(p.amount * 100) / 100,
+      }));
     }
 
     // Validate new splits sum
@@ -325,6 +397,7 @@ export const editExpense = mutation({
       notes: args.notes,
       receiptUrl: args.receiptUrl,
       currency: args.currency || "INR",
+      payments: finalPayments,
       reversesExpenseId: args.expenseId, // links back to reversed one
       createdBy: oldExpense.createdBy, // preserve original creator
     });

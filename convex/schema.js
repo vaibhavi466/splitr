@@ -37,6 +37,14 @@ export default defineSchema({
     isDeleted: v.optional(v.boolean()),
     supersededBy: v.optional(v.id("expenses")),
     reversesExpenseId: v.optional(v.id("expenses")),
+    payments: v.optional(
+      v.array(
+        v.object({
+          userId: v.id("users"),
+          amount: v.number(),
+        })
+      )
+    ),
     createdBy: v.id("users"),
   })
     .index("by_group",["groupId"])

@@ -176,26 +176,24 @@ export const getSettlementData = query({
         .collect())
         .filter((e) => !e.isDeleted);
 
-      // ---------- initialise per‑member tallies
-      const balances = {};
-      group.members.forEach((m) => {
-        if (m.userId !== me._id) balances[m.userId] = { owed: 0, owing: 0 };
-      });
+      const ids = group.members.map((m) => m.userId);
+
+      // ---------- initialise per‑member net totals
+      const totals = Object.fromEntries(ids.map((id) => [id, 0]));
 
       // ---------- apply expenses
       for (const exp of expenses) {
-        if (exp.paidByUserId === me._id) {
-          // I paid; others may owe me
-          exp.splits.forEach((split) => {
-            if (split.userId !== me._id && !split.paid) {
-              balances[split.userId].owed += split.amount;
-            }
+        if (exp.payments && exp.payments.length > 0) {
+          exp.payments.forEach((p) => {
+            totals[p.userId] += p.amount;
           });
-        } else if (balances[exp.paidByUserId]) {
-          // Someone else in the group paid; I may owe them
-          const split = exp.splits.find((s) => s.userId === me._id && !s.paid);
-          if (split) balances[exp.paidByUserId].owing += split.amount;
+        } else {
+          totals[exp.paidByUserId] += exp.amount;
         }
+
+        exp.splits.forEach((s) => {
+          totals[s.userId] -= s.amount;
+        });
       }
 
       // ---------- apply settlements within the group
@@ -205,20 +203,68 @@ export const getSettlementData = query({
         .collect();
 
       for (const st of settlements) {
-        // we only care if ONE side is me
-        if (st.paidByUserId === me._id && balances[st.receivedByUserId]) {
-          balances[st.receivedByUserId].owing = Math.max(
-            0,
-            balances[st.receivedByUserId].owing - st.amount
-          );
-        }
-        if (st.receivedByUserId === me._id && balances[st.paidByUserId]) {
-          balances[st.paidByUserId].owed = Math.max(
-            0,
-            balances[st.paidByUserId].owed - st.amount
-          );
+        totals[st.paidByUserId] += st.amount;
+        totals[st.receivedByUserId] -= st.amount;
+      }
+
+      // ---------- Debt Simplification (Graph Optimization)
+      const creditors = []; // { id, amount }
+      const debtors = []; // { id, amount }
+
+      for (const [id, net] of Object.entries(totals)) {
+        const roundedNet = Math.round(net * 100) / 100;
+        if (roundedNet > 0.01) {
+          creditors.push({ id, amount: roundedNet });
+        } else if (roundedNet < -0.01) {
+          debtors.push({ id, amount: Math.abs(roundedNet) });
         }
       }
+
+      // Sort descending to settle largest first
+      creditors.sort((a, b) => b.amount - a.amount);
+      debtors.sort((a, b) => b.amount - a.amount);
+
+      // Initialize simplified pairwise ledger
+      const simplifiedLedger = {};
+      ids.forEach((a) => {
+        simplifiedLedger[a] = {};
+        ids.forEach((b) => {
+          if (a !== b) simplifiedLedger[a][b] = 0;
+        });
+      });
+
+      let debtIndex = 0;
+      let credIndex = 0;
+
+      while (debtIndex < debtors.length && credIndex < creditors.length) {
+        const debtor = debtors[debtIndex];
+        const creditor = creditors[credIndex];
+
+        const amountToSettle = Math.min(debtor.amount, creditor.amount);
+
+        simplifiedLedger[debtor.id][creditor.id] = Math.round(amountToSettle * 100) / 100;
+
+        debtor.amount -= amountToSettle;
+        creditor.amount -= amountToSettle;
+
+        if (debtor.amount < 0.01) {
+          debtIndex++;
+        }
+        if (creditor.amount < 0.01) {
+          credIndex++;
+        }
+      }
+
+      // Shape the balances matching the query's output format
+      const balances = {};
+      group.members.forEach((m) => {
+        if (m.userId !== me._id) {
+          balances[m.userId] = {
+            owed: simplifiedLedger[me._id][m.userId] || 0,
+            owing: simplifiedLedger[m.userId][me._id] || 0,
+          };
+        }
+      });
 
       // ---------- shape result list
       const members = await Promise.all(

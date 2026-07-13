@@ -32,18 +32,29 @@ export const getUserBalances = query({
     const balanceByUser = {};
 
     for (const e of expenses) {
-      const isPayer = e.paidByUserId === user._id;
-      const mySplit = e.splits.find((s) => s.userId === user._id);
+      // Find the counterpart (since it's a 1-on-1 expense, there is only one other participant)
+      const counterpartId = e.splits.find((s) => s.userId !== user._id)?.userId || e.paidByUserId;
+      if (!counterpartId || counterpartId === user._id) continue;
 
-      if (isPayer) {
-        for (const s of e.splits) {
-          if (s.userId === user._id || s.paid) continue;
-          youAreOwed += s.amount;
-          (balanceByUser[s.userId] ??= { owed: 0, owing: 0 }).owed += s.amount;
-        }
-      } else if (mySplit && !mySplit.paid) {
-        youOwe += mySplit.amount;
-        (balanceByUser[e.paidByUserId] ??= { owed: 0, owing: 0 }).owing += mySplit.amount;
+      let myPaid = 0;
+      if (e.payments && e.payments.length > 0) {
+        const p = e.payments.find((py) => py.userId === user._id);
+        if (p) myPaid = p.amount;
+      } else if (e.paidByUserId === user._id) {
+        myPaid = e.amount;
+      }
+
+      const mySplit = e.splits.find((s) => s.userId === user._id);
+      const myShare = mySplit ? mySplit.amount : 0;
+
+      const myNet = myPaid - myShare;
+      if (myNet > 0) {
+        youAreOwed += myNet;
+        (balanceByUser[counterpartId] ??= { owed: 0, owing: 0 }).owed += myNet;
+      } else if (myNet < 0) {
+        const oweAmt = Math.abs(myNet);
+        youOwe += oweAmt;
+        (balanceByUser[counterpartId] ??= { owed: 0, owing: 0 }).owing += oweAmt;
       }
     }
 
@@ -188,20 +199,18 @@ export const getUserGroups = query({
 
         let balance = 0;
         for (const expense of expenses) {
-          if (expense.paidByUserId === user._id) {
-            expense.splits.forEach((split) => {
-              if (split.userId !== user._id && !split.paid) {
-                balance += split.amount;
-              }
-            });
-          } else {
-            const userSplit = expense.splits.find(
-              (split) => split.userId === user._id
-            );
-            if (userSplit && !userSplit.paid) {
-              balance -= userSplit.amount;
-            }
+          let myPaid = 0;
+          if (expense.payments && expense.payments.length > 0) {
+            const p = expense.payments.find((py) => py.userId === user._id);
+            if (p) myPaid = p.amount;
+          } else if (expense.paidByUserId === user._id) {
+            myPaid = expense.amount;
           }
+
+          const mySplit = expense.splits.find((s) => s.userId === user._id);
+          const myShare = mySplit ? mySplit.amount : 0;
+
+          balance += (myPaid - myShare);
         }
 
         const settlements = await ctx.db

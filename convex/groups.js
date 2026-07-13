@@ -110,67 +110,88 @@ export const getGroupExpenses = query({
     const ids = memberDetails.map((m) => m.id);
 
     /* ----------  ledgers ---------- */
-    // total net balance (old behaviour)
+    // total net balance
     const totals = Object.fromEntries(ids.map((id) => [id, 0]));
-    // pair‑wise ledger  debtor -> creditor -> amount
-    const ledger = {};
-    ids.forEach((a) => {
-      ledger[a] = {};
-      ids.forEach((b) => {
-        if (a !== b) ledger[a][b] = 0;
-      });
-    });
 
     /* ----------  apply expenses ---------- */
     for (const exp of expenses) {
-      const payer = exp.paidByUserId;
-      for (const split of exp.splits) {
-        if (split.userId === payer || split.paid) continue; // skip payer & settled
-        const debtor = split.userId;
-        const amt = split.amount;
-
-        totals[payer] += amt;
-        totals[debtor] -= amt;
-
-        ledger[debtor][payer] += amt; // debtor owes payer
+      if (exp.payments && exp.payments.length > 0) {
+        exp.payments.forEach((p) => {
+          totals[p.userId] += p.amount;
+        });
+      } else {
+        totals[exp.paidByUserId] += exp.amount;
       }
+
+      exp.splits.forEach((s) => {
+        totals[s.userId] -= s.amount;
+      });
     }
 
     /* ----------  apply settlements ---------- */
     for (const s of settlements) {
       totals[s.paidByUserId] += s.amount;
       totals[s.receivedByUserId] -= s.amount;
-
-      ledger[s.paidByUserId][s.receivedByUserId] -= s.amount; // they paid back
     }
 
-    /* ----------  net the pair‑wise ledger ---------- */
+    /* ----------  Debt Simplification (Graph Optimization) ---------- */
+    const creditors = []; // { id, amount }
+    const debtors = []; // { id, amount }
+
+    for (const [id, net] of Object.entries(totals)) {
+      const roundedNet = Math.round(net * 100) / 100;
+      if (roundedNet > 0.01) {
+        creditors.push({ id, amount: roundedNet });
+      } else if (roundedNet < -0.01) {
+        debtors.push({ id, amount: Math.abs(roundedNet) });
+      }
+    }
+
+    // Sort descending to settle largest first (greedy approach)
+    creditors.sort((a, b) => b.amount - a.amount);
+    debtors.sort((a, b) => b.amount - a.amount);
+
+    // Initialize simplified pairwise ledger
+    const simplifiedLedger = {};
     ids.forEach((a) => {
+      simplifiedLedger[a] = {};
       ids.forEach((b) => {
-        if (a >= b) return; // visit each unordered pair once
-        const diff = ledger[a][b] - ledger[b][a];
-        if (diff > 0) {
-          ledger[a][b] = diff;
-          ledger[b][a] = 0;
-        } else if (diff < 0) {
-          ledger[b][a] = -diff;
-          ledger[a][b] = 0;
-        } else {
-          ledger[a][b] = ledger[b][a] = 0;
-        }
+        if (a !== b) simplifiedLedger[a][b] = 0;
       });
     });
+
+    let debtIndex = 0;
+    let credIndex = 0;
+
+    while (debtIndex < debtors.length && credIndex < creditors.length) {
+      const debtor = debtors[debtIndex];
+      const creditor = creditors[credIndex];
+
+      const amountToSettle = Math.min(debtor.amount, creditor.amount);
+
+      simplifiedLedger[debtor.id][creditor.id] = Math.round(amountToSettle * 100) / 100;
+
+      debtor.amount -= amountToSettle;
+      creditor.amount -= amountToSettle;
+
+      if (debtor.amount < 0.01) {
+        debtIndex++;
+      }
+      if (creditor.amount < 0.01) {
+        credIndex++;
+      }
+    }
 
     /* ----------  shape the response ---------- */
     const balances = memberDetails.map((m) => ({
       ...m,
       totalBalance: totals[m.id],
-      owes: Object.entries(ledger[m.id])
+      owes: Object.entries(simplifiedLedger[m.id])
         .filter(([, v]) => v > 0)
         .map(([to, amount]) => ({ to, amount })),
       owedBy: ids
-        .filter((other) => ledger[other][m.id] > 0)
-        .map((other) => ({ from: other, amount: ledger[other][m.id] })),
+        .filter((other) => simplifiedLedger[other][m.id] > 0)
+        .map((other) => ({ from: other, amount: simplifiedLedger[other][m.id] })),
     }));
 
     const userLookupMap = {};
