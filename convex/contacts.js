@@ -115,6 +115,8 @@ export const createGroup = mutation({
       name: args.name.trim(),
       description: args.description?.trim() ?? "",
       createdBy: currentUser._id,
+      currency: "INR",
+      createdAt: Date.now(),
       members: [...uniqueMembers].map((id) => ({
         userId: id,
         role: id === currentUser._id ? "admin" : "member",

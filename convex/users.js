@@ -15,6 +15,35 @@ export const store = mutation({
     const { subject, email, name, picture } = identity;
     console.log("Identity:", { subject, email, name, picture });
 
+    // Look for matching placeholder user by phone or email
+    let placeholderUser = null;
+    if (identity.phoneNumber) {
+      placeholderUser = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", identity.phoneNumber))
+        .filter((q) => q.eq(q.field("isPlaceholder"), true))
+        .first();
+    }
+    if (!placeholderUser && email) {
+      placeholderUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .filter((q) => q.eq(q.field("isPlaceholder"), true))
+        .first();
+    }
+
+    if (placeholderUser) {
+      console.log("Merging placeholder user:", placeholderUser._id);
+      await ctx.db.patch(placeholderUser._id, {
+        tokenIdentifier: subject,
+        email: email || placeholderUser.email,
+        name: name || placeholderUser.name,
+        imageUrl: picture || placeholderUser.imageUrl,
+        isPlaceholder: false, // no longer a placeholder
+      });
+      return placeholderUser._id;
+    }
+
     const existingUser = await ctx.db
       .query("users")
       .withIndex("by_token", (q) => q.eq("tokenIdentifier", subject))
@@ -30,6 +59,7 @@ export const store = mutation({
       email,
       name,
       imageUrl: picture,
+      phone: identity.phoneNumber,
     });
 
     console.log("New user inserted:", newUserId);
@@ -103,5 +133,33 @@ export const searchUsers = query({
     }
 
     return results;
+  },
+});
+
+// ──────────────── 4. Create placeholder user (unregistered) ────────────────
+export const createPlaceholderUser = mutation({
+  args: {
+    name: v.string(),
+    phone: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Check if user already exists by phone
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q) => q.eq("phone", args.phone))
+      .first();
+
+    if (existing) {
+      return existing._id;
+    }
+
+    const newPlaceholderId = await ctx.db.insert("users", {
+      name: args.name,
+      phone: args.phone,
+      isPlaceholder: true,
+    });
+
+    console.log("Placeholder user created:", newPlaceholderId);
+    return newPlaceholderId;
   },
 });

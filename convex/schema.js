@@ -4,12 +4,15 @@ import { v } from "convex/values";
 export default defineSchema({
   users: defineTable({
     name: v.string(),
-    email: v.string(),
-    tokenIdentifier: v.string(),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    tokenIdentifier: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
+    isPlaceholder: v.optional(v.boolean()),
   })
   .index("by_token", ["tokenIdentifier"])
   .index("by_email", ["email"])
+  .index("by_phone", ["phone"])
   .searchIndex("search_name", { searchField: "name" })
   .searchIndex("search_email", { searchField: "email" }),
 
@@ -38,6 +41,8 @@ export default defineSchema({
     name: v.string(),
     description: v.optional(v.string()),
     createdBy: v.id("users"),
+    currency: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
     members: v.array(
       v.object({
         userId: v.id("users"),
