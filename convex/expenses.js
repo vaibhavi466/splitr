@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
+import { logActivityInternal } from "./activity";
 
 // Create a new expense
 export const createExpense = mutation({
@@ -34,6 +35,27 @@ export const createExpense = mutation({
   handler: async (ctx, args) => {
     // Use centralized getCurrentUser function
     const user = await ctx.runQuery(api.users.getCurrentUser);
+
+    // Duplicate prevention: check if an identical expense was created in the last 60 seconds
+    const sixtySecondsAgo = Date.now() - 60000;
+    const sameRecentExpenses = await ctx.db
+      .query("expenses")
+      .withIndex("by_date", (q) => q.gte("date", sixtySecondsAgo))
+      .collect();
+
+    const isDuplicate = sameRecentExpenses.some((exp) =>
+      !exp.isDeleted &&
+      exp.description === args.description &&
+      Math.abs(exp.amount - args.amount) < 0.01 &&
+      exp.paidByUserId === args.paidByUserId &&
+      exp.groupId === args.groupId
+    );
+
+    if (isDuplicate) {
+      throw new Error(
+        `Duplicate expense detected! An identical expense "${args.description}" of ₹${args.amount.toFixed(2)} was created within the last 60 seconds.`
+      );
+    }
 
     // Validate expense amount
     if (args.amount <= 0) {
@@ -115,6 +137,13 @@ export const createExpense = mutation({
       currency: args.currency || "INR",
       payments: finalPayments,
       createdBy: user._id,
+    });
+
+    await logActivityInternal(ctx, {
+      action: "expense_created",
+      description: `${user.name} added "${args.description}" of ₹${args.amount.toFixed(2)}`,
+      userId: user._id,
+      groupId: args.groupId,
     });
 
     return expenseId;
@@ -288,6 +317,13 @@ export const deleteExpense = mutation({
       deletedAt: Date.now(),
     });
 
+    await logActivityInternal(ctx, {
+      action: "expense_deleted",
+      description: `${user.name} deleted "${expense.description}"`,
+      userId: user._id,
+      groupId: expense.groupId,
+    });
+
     return { success: true };
   },
 });
@@ -407,6 +443,13 @@ export const editExpense = mutation({
       isDeleted: true,
       supersededBy: newExpenseId,
       deletedAt: Date.now(),
+    });
+
+    await logActivityInternal(ctx, {
+      action: "expense_edited",
+      description: `${user.name} updated "${oldExpense.description}" to "${args.description}"`,
+      userId: user._id,
+      groupId: args.groupId,
     });
 
     return newExpenseId;

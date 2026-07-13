@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
+import { logActivityInternal } from "./activity";
 
 /* ============================================================================
  *  MUTATION: createSettlement
@@ -43,7 +44,12 @@ export const createSettlement = mutation({
     }
 
     /* ── insert ──────────────────────────────────────────────────────────── */
-    return await ctx.db.insert("settlements", {
+    const payer = await ctx.db.get(args.paidByUserId);
+    const receiver = await ctx.db.get(args.receivedByUserId);
+    const payerName = payer?.name || "Someone";
+    const receiverName = receiver?.name || "Someone";
+
+    const settlementId = await ctx.db.insert("settlements", {
       amount: args.amount,
       note: args.note,
       date: Date.now(), // server‑side timestamp
@@ -53,6 +59,15 @@ export const createSettlement = mutation({
       relatedExpenseIds: args.relatedExpenseIds,
       createdBy: caller._id,
     });
+
+    await logActivityInternal(ctx, {
+      action: "settlement_created",
+      description: `${payerName} settled with ${receiverName}: paid ₹${args.amount.toFixed(2)}`,
+      userId: caller._id,
+      groupId: args.groupId,
+    });
+
+    return settlementId;
   },
 });
 

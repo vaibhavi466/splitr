@@ -57,6 +57,7 @@ export default defineSchema({
     createdBy: v.id("users"),
     currency: v.optional(v.string()),
     createdAt: v.optional(v.number()),
+    isArchived: v.optional(v.boolean()),
     members: v.array(
       v.object({
         userId: v.id("users"),
@@ -80,5 +81,16 @@ export default defineSchema({
     .index("by_user_and_group",["paidByUserId","groupId"])
     .index("by_receiver_and_group",["receivedByUserId","groupId"])
     .index("by_date", ["date"]),
+
+  activityLogs: defineTable({
+    action: v.string(), // "expense_created", "expense_edited", "expense_deleted", "settlement_created"
+    description: v.string(),
+    userId: v.id("users"),
+    groupId: v.optional(v.id("groups")),
+    timestamp: v.number(),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_user", ["userId"])
+    .index("by_timestamp", ["timestamp"]),
 
 });

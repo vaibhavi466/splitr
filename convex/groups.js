@@ -1,6 +1,7 @@
-import { query } from "./_generated/server";
+import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
+import { logActivityInternal } from "./activity";
 
 export const getGroupOrMembers = query({
   args: {
@@ -13,6 +14,7 @@ export const getGroupOrMembers = query({
     // Get all groups where the user is a member
     const allGroups = await ctx.db.query("groups").collect();
     const userGroups = allGroups.filter((group) =>
+      !group.isArchived &&
       group.members.some((member) => member.userId === currentUser._id)
     );
 
@@ -211,5 +213,115 @@ export const getGroupExpenses = query({
       balances,
       userLookupMap,
     };
+  },
+});
+
+// Leave a group (only allowed if net balance is exactly zero)
+export const leaveGroup = mutation({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const user = await ctx.runQuery(api.users.getCurrentUser);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) throw new Error("Group not found");
+
+    const isMember = group.members.some((m) => m.userId === user._id);
+    if (!isMember) throw new Error("You are not a member of this group");
+
+    // Fetch active expenses and settlements for this group
+    const expenses = (await ctx.db
+      .query("expenses")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect())
+      .filter((e) => !e.isDeleted);
+
+    const settlements = await ctx.db
+      .query("settlements")
+      .filter((q) => q.eq(q.field("groupId"), args.groupId))
+      .collect();
+
+    // Calculate user's net balance in group
+    let netBalance = 0;
+
+    for (const exp of expenses) {
+      let userPaid = 0;
+      if (exp.payments && exp.payments.length > 0) {
+        const p = exp.payments.find((py) => py.userId === user._id);
+        if (p) userPaid = p.amount;
+      } else if (exp.paidByUserId === user._id) {
+        userPaid = exp.amount;
+      }
+
+      const userSplit = exp.splits.find((s) => s.userId === user._id);
+      const userShare = userSplit ? userSplit.amount : 0;
+
+      netBalance += (userPaid - userShare);
+    }
+
+    for (const st of settlements) {
+      if (st.paidByUserId === user._id) {
+        netBalance += st.amount;
+      }
+      if (st.receivedByUserId === user._id) {
+        netBalance -= st.amount;
+      }
+    }
+
+    // Verify balance is exactly zero (with 1 cent tolerance)
+    if (Math.abs(netBalance) > 0.01) {
+      throw new Error(
+        `Cannot leave group: your outstanding balance is ₹${netBalance.toFixed(2)}. Please settle all debts before leaving.`
+      );
+    }
+
+    // Remove user from the group members list
+    const updatedMembers = group.members.filter((m) => m.userId !== user._id);
+    await ctx.db.patch(args.groupId, {
+      members: updatedMembers,
+    });
+
+    // Log activity
+    await logActivityInternal(ctx, {
+      action: "group_member_left",
+      description: `${user.name} left the group "${group.name}"`,
+      userId: user._id,
+      groupId: args.groupId,
+    });
+
+    return { success: true };
+  },
+});
+
+// Archive (soft delete) a group
+export const deleteGroup = mutation({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const user = await ctx.runQuery(api.users.getCurrentUser);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) throw new Error("Group not found");
+
+    // Check permission: only admin or creator can archive the group
+    const memberObj = group.members.find((m) => m.userId === user._id);
+    const isAdmin = memberObj?.role === "admin" || group.createdBy === user._id;
+
+    if (!isAdmin) {
+      throw new Error("You don't have permission to archive this group");
+    }
+
+    // Soft delete / archive the group
+    await ctx.db.patch(args.groupId, {
+      isArchived: true,
+    });
+
+    // Log activity
+    await logActivityInternal(ctx, {
+      action: "group_archived",
+      description: `${user.name} archived the group "${group.name}"`,
+      userId: user._id,
+      groupId: args.groupId,
+    });
+
+    return { success: true };
   },
 });

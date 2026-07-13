@@ -19,6 +19,7 @@ export const getUserBalances = query({
   handler: async (ctx) => {
     const user = await getCurrentUser(ctx);
 
+    // 1. Fetch 1-to-1 expenses
     const expenses = (await ctx.db.query("expenses").collect()).filter(
       (e) =>
         !e.isDeleted &&
@@ -49,15 +50,13 @@ export const getUserBalances = query({
 
       const myNet = myPaid - myShare;
       if (myNet > 0) {
-        youAreOwed += myNet;
         (balanceByUser[counterpartId] ??= { owed: 0, owing: 0 }).owed += myNet;
       } else if (myNet < 0) {
-        const oweAmt = Math.abs(myNet);
-        youOwe += oweAmt;
-        (balanceByUser[counterpartId] ??= { owed: 0, owing: 0 }).owing += oweAmt;
+        (balanceByUser[counterpartId] ??= { owed: 0, owing: 0 }).owing += Math.abs(myNet);
       }
     }
 
+    // 1-to-1 settlements
     const settlements = (await ctx.db.query("settlements").collect()).filter(
       (s) =>
         !s.groupId &&
@@ -66,33 +65,150 @@ export const getUserBalances = query({
 
     for (const s of settlements) {
       if (s.paidByUserId === user._id) {
-        youOwe -= s.amount;
         (balanceByUser[s.receivedByUserId] ??= { owed: 0, owing: 0 }).owing -= s.amount;
       } else {
-        youAreOwed -= s.amount;
         (balanceByUser[s.paidByUserId] ??= { owed: 0, owing: 0 }).owed -= s.amount;
       }
     }
 
+    // 2. Fetch Group balances
+    const allGroups = await ctx.db.query("groups").collect();
+    const groups = allGroups.filter((g) =>
+      g.members.some((m) => m.userId === user._id)
+    );
+
+    for (const group of groups) {
+      // Get all active expenses for this group
+      const groupExpenses = (await ctx.db
+        .query("expenses")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .collect())
+        .filter((e) => !e.isDeleted);
+
+      const groupSettlements = await ctx.db
+        .query("settlements")
+        .filter((q) => q.eq(q.field("groupId"), group._id))
+        .collect();
+
+      const ids = group.members.map((m) => m.userId);
+      const totals = Object.fromEntries(ids.map((id) => [id, 0]));
+
+      // apply group expenses
+      for (const exp of groupExpenses) {
+        if (exp.payments && exp.payments.length > 0) {
+          exp.payments.forEach((p) => {
+            totals[p.userId] += p.amount;
+          });
+        } else {
+          totals[exp.paidByUserId] += exp.amount;
+        }
+
+        exp.splits.forEach((s) => {
+          totals[s.userId] -= s.amount;
+        });
+      }
+
+      // apply group settlements
+      for (const st of groupSettlements) {
+        totals[st.paidByUserId] += st.amount;
+        totals[st.receivedByUserId] -= st.amount;
+      }
+
+      // Debt simplification (graph optimization) to get simplified group debts
+      const creditors = [];
+      const debtors = [];
+      for (const [id, net] of Object.entries(totals)) {
+        const roundedNet = Math.round(net * 100) / 100;
+        if (roundedNet > 0.01) {
+          creditors.push({ id, amount: roundedNet });
+        } else if (roundedNet < -0.01) {
+          debtors.push({ id, amount: Math.abs(roundedNet) });
+        }
+      }
+
+      creditors.sort((a, b) => b.amount - a.amount);
+      debtors.sort((a, b) => b.amount - a.amount);
+
+      const simplifiedLedger = {};
+      ids.forEach((a) => {
+        simplifiedLedger[a] = {};
+        ids.forEach((b) => {
+          if (a !== b) simplifiedLedger[a][b] = 0;
+        });
+      });
+
+      let debtIndex = 0;
+      let credIndex = 0;
+
+      while (debtIndex < debtors.length && credIndex < creditors.length) {
+        const debtor = debtors[debtIndex];
+        const creditor = creditors[credIndex];
+        const amountToSettle = Math.min(debtor.amount, creditor.amount);
+
+        simplifiedLedger[debtor.id][creditor.id] = Math.round(amountToSettle * 100) / 100;
+
+        debtor.amount -= amountToSettle;
+        creditor.amount -= amountToSettle;
+
+        if (debtor.amount < 0.01) debtIndex++;
+        if (creditor.amount < 0.01) credIndex++;
+      }
+
+      // Add user's simplified group debts to balanceByUser
+      ids.forEach((otherId) => {
+        if (otherId === user._id) return;
+        const groupOwed = simplifiedLedger[user._id][otherId] || 0;
+        const groupOwing = simplifiedLedger[otherId][user._id] || 0;
+        if (groupOwed > 0) {
+          (balanceByUser[otherId] ??= { owed: 0, owing: 0 }).owed += groupOwed;
+        }
+        if (groupOwing > 0) {
+          (balanceByUser[otherId] ??= { owed: 0, owing: 0 }).owing += groupOwing;
+        }
+      });
+    }
+
+    // 3. Compile final lists
     const youOweList = [];
     const youAreOwedByList = [];
 
     for (const [uid, { owed, owing }] of Object.entries(balanceByUser)) {
       const net = owed - owing;
-      if (net === 0) continue;
+      const roundedNet = Math.round(net * 100) / 100;
+      if (Math.abs(roundedNet) < 0.01) continue;
 
       const counterpart = await ctx.db.get(uid);
       const base = {
         userId: uid,
         name: counterpart?.name ?? "Unknown",
         imageUrl: counterpart?.imageUrl,
-        amount: Math.abs(net),
+        amount: Math.abs(roundedNet),
       };
-      net > 0 ? youAreOwedByList.push(base) : youOweList.push(base);
+      if (roundedNet > 0) {
+        youAreOwed += roundedNet;
+        youAreOwedByList.push(base);
+      } else {
+        youOwe += Math.abs(roundedNet);
+        youOweList.push(base);
+      }
     }
 
     youOweList.sort((a, b) => b.amount - a.amount);
     youAreOwedByList.sort((a, b) => b.amount - a.amount);
+
+    // Fetch recent expenses
+    const recentExpenses = (await ctx.db.query("expenses").collect())
+      .filter(
+        (e) =>
+          !e.isDeleted &&
+          (e.paidByUserId === user._id ||
+            e.splits.some((s) => s.userId === user._id))
+      )
+      .sort((a, b) => b.date - a.date)
+      .slice(0, 5);
+
+    // Pending settlements (counterparts with non-zero balances)
+    const pendingSettlements = [...youOweList, ...youAreOwedByList];
 
     return {
       youOwe,
@@ -102,6 +218,8 @@ export const getUserBalances = query({
         youOwe: youOweList,
         youAreOwedBy: youAreOwedByList,
       },
+      recentExpenses,
+      pendingSettlements,
     };
   },
 });
@@ -186,6 +304,7 @@ export const getUserGroups = query({
 
     const allGroups = await ctx.db.query("groups").collect();
     const groups = allGroups.filter((group) =>
+      !group.isArchived &&
       group.members.some((m) => m.userId === user._id)
     );
 
