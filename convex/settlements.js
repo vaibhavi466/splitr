@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api } from "./_generated/api";
 
 /* ============================================================================
  *  MUTATION: createSettlement
@@ -17,7 +17,7 @@ export const createSettlement = mutation({
   },
   handler: async (ctx, args) => {
     // Use centralized getCurrentUser function
-    const caller = await ctx.runQuery(internal.users.getCurrentUser);
+    const caller = await ctx.runQuery(api.users.getCurrentUser);
 
     /* ── basic validation ────────────────────────────────────────────────── */
     if (args.amount <= 0) throw new Error("Amount must be positive");
@@ -70,7 +70,7 @@ export const getSettlementData = query({
   },
   handler: async (ctx, args) => {
     // Use centralized getCurrentUser function
-    const me = await ctx.runQuery(internal.users.getCurrentUser);
+    const me = await ctx.runQuery(api.users.getCurrentUser);
 
     if (args.entityType === "user") {
       /* ─────────────────────────────────────────────── user page */

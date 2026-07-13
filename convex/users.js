@@ -48,7 +48,7 @@ export const getCurrentUser = query({
     const user = await ctx.db
       .query("users")
       .withIndex("by_token", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+        q.eq("tokenIdentifier", identity.subject)
       )
       .first();
 
@@ -70,7 +70,7 @@ export const searchUsers = query({
     const currentUser = await ctx.db
       .query("users")
       .withIndex("by_token", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+        q.eq("tokenIdentifier", identity.subject)
       )
       .first();
 

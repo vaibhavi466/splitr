@@ -37,6 +37,14 @@ export default function PersonExpensesPage() {
   const settlements = data?.settlements || [];
   const balance = data?.balance || 0;
 
+  if (!otherUser) {
+    return (
+      <div className="container mx-auto py-12 text-center text-muted-foreground">
+        User not found or data unavailable.
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto py-6 max-w-4xl">
       <div className="mb-6">
@@ -105,7 +113,7 @@ export default function PersonExpensesPage() {
             <div
               className={`text-2xl font-bold ${balance > 0 ? "text-green-600" : balance < 0 ? "text-red-600" : ""}`}
             >
-              ${Math.abs(balance).toFixed(2)}
+              ₹{Math.abs(balance).toFixed(2)}
             </div>
           </div>
         </CardContent>

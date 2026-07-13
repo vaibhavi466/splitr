@@ -1,4 +1,4 @@
-import { internal } from "./_generated/api";
+import { api } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
@@ -6,7 +6,7 @@ export const getAllContacts=query({
     handler:async (ctx)=>{
 
         // Use the centralized getCurrentUser instead of duplicating auth logic
-    const currentUser = await ctx.runQuery(internal.users.getCurrentUser);
+    const currentUser = await ctx.runQuery(api.users.getCurrentUser);
 
     /* ── personal expenses where YOU are the payer ─────────────────────── */
     const expensesYouPaid = await ctx.db
@@ -69,11 +69,12 @@ export const getAllContacts=query({
         type: "group",
       }));
 
-    /* sort alphabetically */
-    contactUsers.sort((a, b) => a?.name.localeCompare(b?.name));
+    /* sort alphabetically (after filtering out nulls) */
+    const validContacts = contactUsers.filter(Boolean);
+    validContacts.sort((a, b) => a.name.localeCompare(b.name));
     userGroups.sort((a, b) => a.name.localeCompare(b.name));
 
-    return { users: contactUsers.filter(Boolean), groups: userGroups };
+    return { users: validContacts, groups: userGroups };
   },
 });
 
@@ -88,7 +89,7 @@ export const createGroup = mutation({
   },
   handler: async (ctx, args) => {
     // Use the centralized getCurrentUser instead of duplicating auth logic
-    const currentUser = await ctx.runQuery(internal.users.getCurrentUser);
+    const currentUser = await ctx.runQuery(api.users.getCurrentUser);
 
     if (!args.name.trim()) throw new Error("Group name cannot be empty");
 

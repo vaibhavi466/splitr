@@ -261,8 +261,8 @@ export default function SettlementForm({ entityType, entityData, onSuccess }) {
           <div className="space-y-2">
             {groupMembers.map((member) => {
               const isSelected = selectedGroupMemberId === member.userId;
-              const isOwing = member.netBalance < 0; // negative means they owe you
-              const isOwed = member.netBalance > 0; // positive means you owe them
+              const isOwed = member.netBalance < 0; // negative means they owe you
+              const isOwing = member.netBalance > 0; // positive means you owe them
 
               return (
                 <div
