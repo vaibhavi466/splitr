@@ -9,10 +9,11 @@ export const getUsersWithOutstandingDebts = query({
     const result = [];
 
     // Load every 1‑to‑1 expense once (groupId === undefined)
-    const expenses = await ctx.db
+    const expenses = (await ctx.db
       .query("expenses")
       .filter((q) => q.eq(q.field("groupId"), undefined))
-      .collect();
+      .collect())
+      .filter((e) => !e.isDeleted);
 
     // Load every 1‑to‑1 settlement once (groupId === undefined)
     const settlements = await ctx.db
@@ -132,18 +133,20 @@ export const getUsersWithExpenses = query({
 
     for (const user of users) {
       // First, check expenses where this user is the payer
-      const paidExpenses = await ctx.db
+      const paidExpenses = (await ctx.db
         .query("expenses")
         .withIndex("by_date", (q) => q.gte("date", monthStart))
         .filter((q) => q.eq(q.field("paidByUserId"), user._id))
-        .collect();
+        .collect())
+        .filter((e) => !e.isDeleted);
 
       // Then, check all expenses to find ones where user is in splits
       // We need to do this separately because we can't filter directly on array contents
-      const allRecentExpenses = await ctx.db
+      const allRecentExpenses = (await ctx.db
         .query("expenses")
         .withIndex("by_date", (q) => q.gte("date", monthStart))
-        .collect();
+        .collect())
+        .filter((e) => !e.isDeleted);
 
       const splitExpenses = allRecentExpenses.filter((expense) =>
         expense.splits.some((split) => split.userId === user._id)
@@ -176,10 +179,11 @@ export const getUserMonthlyExpenses = query({
     const monthStart = oneMonthAgo.getTime();
 
     // Get all expenses involving this user from the past month
-    const allExpenses = await ctx.db
+    const allExpenses = (await ctx.db
       .query("expenses")
       .withIndex("by_date", (q) => q.gte("date", monthStart))
-      .collect();
+      .collect())
+      .filter((e) => !e.isDeleted);
 
     // Filter for expenses where this user is involved
     const userExpenses = allExpenses.filter((expense) => {

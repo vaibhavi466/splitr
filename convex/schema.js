@@ -34,6 +34,9 @@ export default defineSchema({
     notes: v.optional(v.string()),
     receiptUrl: v.optional(v.string()),
     currency: v.optional(v.string()),
+    isDeleted: v.optional(v.boolean()),
+    supersededBy: v.optional(v.id("expenses")),
+    reversesExpenseId: v.optional(v.id("expenses")),
     createdBy: v.id("users"),
   })
     .index("by_group",["groupId"])

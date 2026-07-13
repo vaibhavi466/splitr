@@ -100,19 +100,21 @@ export const getExpensesBetweenUsers = query({
 
     /* ───── 1. One-on-one expenses where either user is the payer ───── */
     // Use the compound index (`paidByUserId`,`groupId`) with groupId = undefined
-    const myPaid = await ctx.db
+    const myPaid = (await ctx.db
       .query("expenses")
       .withIndex("by_user_and_group", (q) =>
         q.eq("paidByUserId", me._id).eq("groupId", undefined)
       )
-      .collect();
+      .collect())
+      .filter((e) => !e.isDeleted);
 
-    const theirPaid = await ctx.db
+    const theirPaid = (await ctx.db
       .query("expenses")
       .withIndex("by_user_and_group", (q) =>
         q.eq("paidByUserId", userId).eq("groupId", undefined)
       )
-      .collect();
+      .collect())
+      .filter((e) => !e.isDeleted);
 
     // Merge → candidate set is now just the rows either of us paid for
     const candidateExpenses = [...myPaid, ...theirPaid];
@@ -239,9 +241,101 @@ export const deleteExpense = mutation({
       }
     }
 
-    // Delete the expense
-    await ctx.db.delete(args.expenseId);
+    // Soft delete the expense
+    await ctx.db.patch(args.expenseId, {
+      isDeleted: true,
+      deletedAt: Date.now(),
+    });
 
     return { success: true };
+  },
+});
+
+// Edit an existing expense using immutable history reversal pattern
+export const editExpense = mutation({
+  args: {
+    expenseId: v.id("expenses"),
+    description: v.string(),
+    amount: v.number(),
+    category: v.optional(v.string()),
+    date: v.number(), // timestamp
+    paidByUserId: v.id("users"),
+    splitType: v.string(), // "equal", "percentage", "exact", "ratio"
+    splits: v.array(
+      v.object({
+        userId: v.id("users"),
+        amount: v.number(),
+        paid: v.boolean(),
+      })
+    ),
+    groupId: v.optional(v.id("groups")),
+    notes: v.optional(v.string()),
+    receiptUrl: v.optional(v.string()),
+    currency: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.runQuery(api.users.getCurrentUser);
+
+    // Get the old expense
+    const oldExpense = await ctx.db.get(args.expenseId);
+    if (!oldExpense) {
+      throw new Error("Expense not found");
+    }
+
+    // Check permissions
+    if (oldExpense.createdBy !== user._id && oldExpense.paidByUserId !== user._id) {
+      throw new Error("You don't have permission to edit this expense");
+    }
+
+    // Validate new amount
+    if (args.amount <= 0) {
+      throw new Error("Expense amount must be a positive number greater than zero");
+    }
+
+    // Validate new splits sum
+    let sumCents = 0;
+    for (const split of args.splits) {
+      if (split.amount <= 0) {
+        throw new Error("Split amounts must be positive numbers greater than zero");
+      }
+      const splitAmount = Math.round(split.amount * 100) / 100;
+      sumCents += Math.round(splitAmount * 100);
+    }
+    const totalCents = Math.round(args.amount * 100);
+    if (sumCents !== totalCents) {
+      throw new Error(
+        `Split amounts sum (₹${(sumCents / 100).toFixed(2)}) must exactly equal the total expense amount (₹${(totalCents / 100).toFixed(2)})`
+      );
+    }
+
+    // Create a NEW expense representing the new state in the ledger
+    const newExpenseId = await ctx.db.insert("expenses", {
+      description: args.description,
+      amount: Math.round(args.amount * 100) / 100,
+      category: args.category || "Other",
+      date: args.date,
+      paidByUserId: args.paidByUserId,
+      splitType: args.splitType,
+      splits: args.splits.map(s => ({
+        userId: s.userId,
+        amount: Math.round(s.amount * 100) / 100,
+        paid: s.paid,
+      })),
+      groupId: args.groupId,
+      notes: args.notes,
+      receiptUrl: args.receiptUrl,
+      currency: args.currency || "INR",
+      reversesExpenseId: args.expenseId, // links back to reversed one
+      createdBy: oldExpense.createdBy, // preserve original creator
+    });
+
+    // Soft delete the OLD expense (reversing its balance)
+    await ctx.db.patch(args.expenseId, {
+      isDeleted: true,
+      supersededBy: newExpenseId,
+      deletedAt: Date.now(),
+    });
+
+    return newExpenseId;
   },
 });

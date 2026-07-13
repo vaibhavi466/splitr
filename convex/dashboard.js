@@ -21,6 +21,7 @@ export const getUserBalances = query({
 
     const expenses = (await ctx.db.query("expenses").collect()).filter(
       (e) =>
+        !e.isDeleted &&
         !e.groupId &&
         (e.paidByUserId === user._id ||
           e.splits.some((s) => s.userId === user._id))
@@ -108,8 +109,9 @@ export const getTotalSpent = query({
 
     const userExpenses = expenses.filter(
       (expense) =>
-        expense.paidByUserId === user._id ||
-        expense.splits.some((split) => split.userId === user._id)
+        !expense.isDeleted &&
+        (expense.paidByUserId === user._id ||
+          expense.splits.some((split) => split.userId === user._id))
     );
 
     let totalSpent = 0;
@@ -137,8 +139,9 @@ export const getMonthlySpending = query({
 
     const userExpenses = expenses.filter(
       (expense) =>
-        expense.paidByUserId === user._id ||
-        expense.splits.some((split) => split.userId === user._id)
+        !expense.isDeleted &&
+        (expense.paidByUserId === user._id ||
+          expense.splits.some((split) => split.userId === user._id))
     );
 
     const monthlyTotals = {};
@@ -177,10 +180,11 @@ export const getUserGroups = query({
 
     const enhancedGroups = await Promise.all(
       groups.map(async (group) => {
-        const expenses = await ctx.db
+        const expenses = (await ctx.db
           .query("expenses")
           .withIndex("by_group", (q) => q.eq("groupId", group._id))
-          .collect();
+          .collect())
+          .filter((e) => !e.isDeleted);
 
         let balance = 0;
         for (const expense of expenses) {

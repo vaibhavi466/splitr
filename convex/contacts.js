@@ -9,12 +9,13 @@ export const getAllContacts=query({
     const currentUser = await ctx.runQuery(api.users.getCurrentUser);
 
     /* ── personal expenses where YOU are the payer ─────────────────────── */
-    const expensesYouPaid = await ctx.db
+    const expensesYouPaid = (await ctx.db
       .query("expenses")
       .withIndex("by_user_and_group", (q) =>
         q.eq("paidByUserId", currentUser._id).eq("groupId", undefined)
       )
-      .collect();
+      .collect())
+      .filter((e) => !e.isDeleted);
 
     const expensesNotPaidByYou = (
       await ctx.db
@@ -23,6 +24,7 @@ export const getAllContacts=query({
         .collect()
     ).filter(
       (e) =>
+        !e.isDeleted &&
         e.paidByUserId !== currentUser._id &&
         e.splits.some((s) => s.userId === currentUser._id)
     );

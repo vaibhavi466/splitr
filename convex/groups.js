@@ -89,10 +89,11 @@ export const getGroupExpenses = query({
     if (!group.members.some((m) => m.userId === currentUser._id))
       throw new Error("You are not a member of this group");
 
-    const expenses = await ctx.db
+    const expenses = (await ctx.db
       .query("expenses")
       .withIndex("by_group", (q) => q.eq("groupId", groupId))
-      .collect();
+      .collect())
+      .filter((e) => !e.isDeleted);
 
     const settlements = await ctx.db
       .query("settlements")

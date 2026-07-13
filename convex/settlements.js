@@ -78,19 +78,21 @@ export const getSettlementData = query({
       if (!other) throw new Error("User not found");
 
       // ---------- gather expenses where either of us paid or appears in splits
-      const myExpenses = await ctx.db
+      const myExpenses = (await ctx.db
         .query("expenses")
         .withIndex("by_user_and_group", (q) =>
           q.eq("paidByUserId", me._id).eq("groupId", undefined)
         )
-        .collect();
+        .collect())
+        .filter((e) => !e.isDeleted);
 
-      const otherUserExpenses = await ctx.db
+      const otherUserExpenses = (await ctx.db
         .query("expenses")
         .withIndex("by_user_and_group", (q) =>
           q.eq("paidByUserId", other._id).eq("groupId", undefined)
         )
-        .collect();
+        .collect())
+        .filter((e) => !e.isDeleted);
 
       const expenses = [...myExpenses, ...otherUserExpenses];
 
@@ -168,10 +170,11 @@ export const getSettlementData = query({
       if (!isMember) throw new Error("You are not a member of this group");
 
       // ---------- expenses for this group
-      const expenses = await ctx.db
+      const expenses = (await ctx.db
         .query("expenses")
         .withIndex("by_group", (q) => q.eq("groupId", group._id))
-        .collect();
+        .collect())
+        .filter((e) => !e.isDeleted);
 
       // ---------- initialise per‑member tallies
       const balances = {};
