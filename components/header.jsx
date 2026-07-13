@@ -22,7 +22,7 @@ export default function Header() {
         <Link href="/" className="flex items-center gap-2">
           <Image
             src={"/logos/logo.png"}
-            alt="Vehiql Logo"
+            alt="Splitr Logo"
             width={200}
             height={60}
             className="h-11 w-auto object-contain"
