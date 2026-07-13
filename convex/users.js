@@ -80,18 +80,28 @@ export const searchUsers = query({
 
     const allUsers = await ctx.db.query("users").collect();
 
-    return allUsers
-      .filter(
-        (u) =>
-          u._id !== currentUser._id &&
-          (u.name?.toLowerCase().includes(args.query.toLowerCase()) ||
-            u.email?.toLowerCase().includes(args.query.toLowerCase()))
-      )
-      .map((u) => ({
-        id: u._id,
-        name: u.name,
-        email: u.email,
-        imageUrl: u.imageUrl,
-      }));
+    const seenEmails = new Set();
+    const results = [];
+
+    for (const u of allUsers) {
+      if (u._id === currentUser._id) continue;
+
+      const nameMatch = u.name?.toLowerCase().includes(args.query.toLowerCase());
+      const emailMatch = u.email?.toLowerCase().includes(args.query.toLowerCase());
+
+      if (nameMatch || emailMatch) {
+        if (!seenEmails.has(u.email)) {
+          seenEmails.add(u.email);
+          results.push({
+            id: u._id,
+            name: u.name,
+            email: u.email,
+            imageUrl: u.imageUrl,
+          });
+        }
+      }
+    }
+
+    return results;
   },
 });

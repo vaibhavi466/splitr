@@ -69,8 +69,17 @@ export const getAllContacts=query({
         type: "group",
       }));
 
-    /* sort alphabetically (after filtering out nulls) */
-    const validContacts = contactUsers.filter(Boolean);
+    /* sort alphabetically (after filtering out nulls and duplicates by email) */
+    const validContacts = [];
+    const seenEmails = new Set();
+    for (const u of contactUsers) {
+      if (u) {
+        if (!seenEmails.has(u.email)) {
+          seenEmails.add(u.email);
+          validContacts.push(u);
+        }
+      }
+    }
     validContacts.sort((a, b) => a.name.localeCompare(b.name));
     userGroups.sort((a, b) => a.name.localeCompare(b.name));
 
