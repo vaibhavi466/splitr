@@ -22,7 +22,7 @@ export default defineSchema({
     category: v.optional(v.string()),
     date: v.number(),
     paidByUserId: v.id("users"),
-    splitType: v.string(),
+    splitType: v.string(), // "equal", "percentage", "exact", "ratio"
     splits: v.array(
       v.object({
         userId: v.id("users"),
@@ -31,6 +31,9 @@ export default defineSchema({
       })
     ),
     groupId: v.optional(v.id("groups")),
+    notes: v.optional(v.string()),
+    receiptUrl: v.optional(v.string()),
+    currency: v.optional(v.string()),
     createdBy: v.id("users"),
   })
     .index("by_group",["groupId"])

@@ -10,7 +10,7 @@ export const createExpense = mutation({
     category: v.optional(v.string()),
     date: v.number(), // timestamp
     paidByUserId: v.id("users"),
-    splitType: v.string(), // "equal", "percentage", "exact"
+    splitType: v.string(), // "equal", "percentage", "exact", "ratio"
     splits: v.array(
       v.object({
         userId: v.id("users"),
@@ -19,10 +19,18 @@ export const createExpense = mutation({
       })
     ),
     groupId: v.optional(v.id("groups")),
+    notes: v.optional(v.string()),
+    receiptUrl: v.optional(v.string()),
+    currency: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Use centralized getCurrentUser function
     const user = await ctx.runQuery(api.users.getCurrentUser);
+
+    // Validate expense amount
+    if (args.amount <= 0) {
+      throw new Error("Expense amount must be a positive number greater than zero");
+    }
 
     // If there's a group, verify the user is a member
     if (args.groupId) {
@@ -39,26 +47,41 @@ export const createExpense = mutation({
       }
     }
 
-    // Verify that splits add up to the total amount (with small tolerance for floating point issues)
-    const totalSplitAmount = args.splits.reduce(
-      (sum, split) => sum + split.amount,
-      0
-    );
-    const tolerance = 0.01; // Allow for small rounding errors
-    if (Math.abs(totalSplitAmount - args.amount) > tolerance) {
-      throw new Error("Split amounts must add up to the total expense amount");
+    // Validate each split and compute exact sum using integer cents to prevent floating point inaccuracies
+    let sumCents = 0;
+    for (const split of args.splits) {
+      if (split.amount <= 0) {
+        throw new Error("Split amounts must be positive numbers greater than zero");
+      }
+      // Round to 2 decimal places to ensure fixed precision
+      const splitAmount = Math.round(split.amount * 100) / 100;
+      sumCents += Math.round(splitAmount * 100);
+    }
+
+    const totalCents = Math.round(args.amount * 100);
+    if (sumCents !== totalCents) {
+      throw new Error(
+        `Split amounts sum (₹${(sumCents / 100).toFixed(2)}) must exactly equal the total expense amount (₹${(totalCents / 100).toFixed(2)})`
+      );
     }
 
     // Create the expense
     const expenseId = await ctx.db.insert("expenses", {
       description: args.description,
-      amount: args.amount,
+      amount: Math.round(args.amount * 100) / 100, // round to 2 decimal places
       category: args.category || "Other",
       date: args.date,
       paidByUserId: args.paidByUserId,
       splitType: args.splitType,
-      splits: args.splits,
+      splits: args.splits.map(s => ({
+        userId: s.userId,
+        amount: Math.round(s.amount * 100) / 100, // round to 2 decimal places
+        paid: s.paid,
+      })),
       groupId: args.groupId,
+      notes: args.notes,
+      receiptUrl: args.receiptUrl,
+      currency: args.currency || "INR",
       createdBy: user._id,
     });
 

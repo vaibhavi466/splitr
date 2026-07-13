@@ -38,8 +38,11 @@ const expenseSchema = z.object({
   category: z.string().optional(),
   date: z.date(),
   paidByUserId: z.string().min(1, "Payer is required"),
-  splitType: z.enum(["equal", "percentage", "exact"]),
+  splitType: z.enum(["equal", "percentage", "exact", "ratio"]),
   groupId: z.string().optional(),
+  notes: z.string().optional(),
+  receiptUrl: z.string().optional(),
+  currency: z.string().optional(),
 });
 
 export function ExpenseForm({ type = "individual", onSuccess }) {
@@ -72,6 +75,9 @@ export function ExpenseForm({ type = "individual", onSuccess }) {
       paidByUserId: currentUser?._id || "",
       splitType: "equal",
       groupId: undefined,
+      notes: "",
+      receiptUrl: "",
+      currency: "INR",
     },
   });
 
@@ -98,11 +104,15 @@ export function ExpenseForm({ type = "individual", onSuccess }) {
   const onSubmit = async (data) => {
     try {
       const amount = parseFloat(data.amount);
+      if (amount <= 0) {
+        toast.error("Amount must be a positive number greater than zero");
+        return;
+      }
 
       // Prepare splits in the format expected by the API
       const formattedSplits = splits.map((split) => ({
         userId: split.userId,
-        amount: split.amount,
+        amount: Math.round(split.amount * 100) / 100, // round to 2 decimal places
         paid: split.userId === data.paidByUserId,
       }));
 
@@ -126,13 +136,16 @@ export function ExpenseForm({ type = "individual", onSuccess }) {
       // Create the expense
       await createExpense.mutate({
         description: data.description,
-        amount: amount,
+        amount: Math.round(amount * 100) / 100,
         category: data.category || "Other",
         date: data.date.getTime(), // Convert to timestamp
         paidByUserId: data.paidByUserId,
         splitType: data.splitType,
         splits: formattedSplits,
         groupId,
+        notes: data.notes || "",
+        receiptUrl: data.receiptUrl || "",
+        currency: data.currency || "INR",
       });
 
       toast.success("Expense created successfully!");
@@ -306,10 +319,11 @@ export function ExpenseForm({ type = "individual", onSuccess }) {
             defaultValue="equal"
             onValueChange={(value) => setValue("splitType", value)}
           >
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="equal">Equal</TabsTrigger>
               <TabsTrigger value="percentage">Percentage</TabsTrigger>
-              <TabsTrigger value="exact">Exact Amounts</TabsTrigger>
+              <TabsTrigger value="exact">Exact</TabsTrigger>
+              <TabsTrigger value="ratio">Ratio</TabsTrigger>
             </TabsList>
             <TabsContent value="equal" className="pt-4">
               <p className="text-sm text-muted-foreground">
@@ -347,7 +361,54 @@ export function ExpenseForm({ type = "individual", onSuccess }) {
                 onSplitsChange={setSplits} // Use setSplits directly
               />
             </TabsContent>
+            <TabsContent value="ratio" className="pt-4">
+              <p className="text-sm text-muted-foreground">
+                Enter arbitrary share ratios (e.g. 2:1:1)
+              </p>
+              <SplitSelector
+                type="ratio"
+                amount={parseFloat(amountValue) || 0}
+                participants={participants}
+                paidByUserId={paidByUserId}
+                onSplitsChange={setSplits} // Use setSplits directly
+              />
+            </TabsContent>
           </Tabs>
+        </div>
+
+        {/* Currency */}
+        <div className="space-y-2">
+          <Label htmlFor="currency">Currency</Label>
+          <select
+            id="currency"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            {...register("currency")}
+          >
+            <option value="INR">INR (₹)</option>
+            <option value="USD">USD ($)</option>
+            <option value="EUR">EUR (€)</option>
+            <option value="GBP">GBP (£)</option>
+          </select>
+        </div>
+
+        {/* Notes */}
+        <div className="space-y-2">
+          <Label htmlFor="notes">Notes</Label>
+          <Input
+            id="notes"
+            placeholder="Add extra details, location, etc."
+            {...register("notes")}
+          />
+        </div>
+
+        {/* Receipt Image URL */}
+        <div className="space-y-2">
+          <Label htmlFor="receiptUrl">Receipt Image URL</Label>
+          <Input
+            id="receiptUrl"
+            placeholder="http://example.com/receipt.jpg"
+            {...register("receiptUrl")}
+          />
         </div>
       </div>
 

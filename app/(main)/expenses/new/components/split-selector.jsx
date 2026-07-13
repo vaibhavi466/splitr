@@ -18,51 +18,124 @@ export function SplitSelector({
 }) {
   const { user } = useUser();
   const [splits, setSplits] = useState([]);
+  const [ratios, setRatios] = useState({});
 
-  // Initialize or update splits based on props
+  // Initialize ratios for participants
+  useEffect(() => {
+    if (participants.length > 0) {
+      setRatios((prev) => {
+        const next = { ...prev };
+        participants.forEach((p) => {
+          if (next[p.id] === undefined) {
+            next[p.id] = 1; // default ratio is 1
+          }
+        });
+        return next;
+      });
+    }
+  }, [participants]);
+
+  // stringified ratios to safely use in useEffect dependency array
+  const ratiosString = JSON.stringify(ratios);
+
+  // Initialize or update splits based on props and modes
   useEffect(() => {
     if (!amount || amount <= 0 || participants.length === 0) return;
 
     let newSplits = [];
 
     if (type === "equal") {
-      const shareAmount = amount / participants.length;
-      newSplits = participants.map((p) => ({
-        userId: p.id,
-        name: p.name,
-        email: p.email,
-        imageUrl: p.imageUrl,
-        amount: shareAmount,
-        percentage: 100 / participants.length,
-        paid: p.id === paidByUserId,
-      }));
+      // Divide using cents and distribute remainder to prevent float errors
+      const totalCents = Math.round(amount * 100);
+      const shareCents = Math.floor(totalCents / participants.length);
+      let remainderCents = totalCents - shareCents * participants.length;
+
+      newSplits = participants.map((p, index) => {
+        const extraCent = index < remainderCents ? 1 : 0;
+        const finalAmount = (shareCents + extraCent) / 100;
+        return {
+          userId: p.id,
+          name: p.name,
+          email: p.email,
+          imageUrl: p.imageUrl,
+          amount: finalAmount,
+          percentage: (finalAmount / amount) * 100,
+          paid: p.id === paidByUserId,
+        };
+      });
     } else if (type === "percentage") {
       const evenPercentage = 100 / participants.length;
-      newSplits = participants.map((p) => ({
-        userId: p.id,
-        name: p.name,
-        email: p.email,
-        imageUrl: p.imageUrl,
-        amount: (amount * evenPercentage) / 100,
-        percentage: evenPercentage,
-        paid: p.id === paidByUserId,
-      }));
+      newSplits = participants.map((p) => {
+        const pct = evenPercentage;
+        const rawAmount = (amount * pct) / 100;
+        const roundedAmount = Math.round(rawAmount * 100) / 100;
+        return {
+          userId: p.id,
+          name: p.name,
+          email: p.email,
+          imageUrl: p.imageUrl,
+          amount: roundedAmount,
+          percentage: pct,
+          paid: p.id === paidByUserId,
+        };
+      });
     } else if (type === "exact") {
       const evenAmount = amount / participants.length;
-      newSplits = participants.map((p) => ({
-        userId: p.id,
-        name: p.name,
-        email: p.email,
-        imageUrl: p.imageUrl,
-        amount: evenAmount,
-        percentage: (evenAmount / amount) * 100,
-        paid: p.id === paidByUserId,
-      }));
+      newSplits = participants.map((p) => {
+        const roundedAmount = Math.round(evenAmount * 100) / 100;
+        return {
+          userId: p.id,
+          name: p.name,
+          email: p.email,
+          imageUrl: p.imageUrl,
+          amount: roundedAmount,
+          percentage: amount > 0 ? (roundedAmount / amount) * 100 : 0,
+          paid: p.id === paidByUserId,
+        };
+      });
+    } else if (type === "ratio") {
+      // Arbitrary ratio splitting with cent remainder distribution
+      const parsedRatios = JSON.parse(ratiosString);
+      const totalRatio = participants.reduce(
+        (sum, p) => sum + (parsedRatios[p.id] !== undefined ? parsedRatios[p.id] : 1),
+        0
+      );
+
+      const totalCents = Math.round(amount * 100);
+      let tempSplits = participants.map((p) => {
+        const ratioVal = parsedRatios[p.id] !== undefined ? parsedRatios[p.id] : 1;
+        const baseCents = totalRatio > 0 ? Math.floor((totalCents * ratioVal) / totalRatio) : 0;
+        return {
+          userId: p.id,
+          name: p.name,
+          email: p.email,
+          imageUrl: p.imageUrl,
+          ratio: ratioVal,
+          baseCents,
+        };
+      });
+
+      const sumCents = tempSplits.reduce((sum, s) => sum + s.baseCents, 0);
+      let remainderCents = totalCents - sumCents;
+
+      newSplits = tempSplits.map((s, index) => {
+        const extraCent = index < remainderCents ? 1 : 0;
+        const finalAmount = (s.baseCents + extraCent) / 100;
+        return {
+          userId: s.userId,
+          name: s.name,
+          email: s.email,
+          imageUrl: s.imageUrl,
+          amount: finalAmount,
+          percentage: amount > 0 ? (finalAmount / amount) * 100 : 0,
+          paid: s.userId === paidByUserId,
+        };
+      });
     }
 
     setSplits(newSplits);
     if (onSplitsChange) onSplitsChange(newSplits);
-  }, [type, amount, participants, paidByUserId, onSplitsChange]);
+  }, [type, amount, participants, paidByUserId, onSplitsChange, ratiosString]);
 
   // Recalculate totals using useMemo
   const totalAmount = useMemo(
@@ -80,15 +153,18 @@ export function SplitSelector({
 
   // Update percentage for one user
   const updatePercentageSplit = (userId, newPercentage) => {
-    const updated = splits.map((s) =>
-      s.userId === userId
-        ? {
-            ...s,
-            percentage: newPercentage,
-            amount: (amount * newPercentage) / 100,
-          }
-        : s
-    );
+    const updated = splits.map((s) => {
+      if (s.userId === userId) {
+        const pct = parseFloat(newPercentage) || 0;
+        const rawAmount = (amount * pct) / 100;
+        return {
+          ...s,
+          percentage: pct,
+          amount: Math.round(rawAmount * 100) / 100,
+        };
+      }
+      return s;
+    });
     setSplits(updated);
     if (onSplitsChange) onSplitsChange(updated);
   };
@@ -96,17 +172,27 @@ export function SplitSelector({
   // Update amount for one user
   const updateExactSplit = (userId, newAmount) => {
     const parsed = parseFloat(newAmount) || 0;
+    const rounded = Math.round(parsed * 100) / 100;
     const updated = splits.map((s) =>
       s.userId === userId
         ? {
             ...s,
-            amount: parsed,
-            percentage: amount > 0 ? (parsed / amount) * 100 : 0,
+            amount: rounded,
+            percentage: amount > 0 ? (rounded / amount) * 100 : 0,
           }
         : s
     );
     setSplits(updated);
     if (onSplitsChange) onSplitsChange(updated);
+  };
+
+  // Update ratio for one user
+  const updateRatioSplit = (userId, newRatio) => {
+    const parsed = parseFloat(newRatio) || 0;
+    setRatios((prev) => ({
+      ...prev,
+      [userId]: parsed,
+    }));
   };
 
   return (
@@ -182,6 +268,28 @@ export function SplitSelector({
                 />
                 <span className="text-sm text-muted-foreground ml-1">
                   ({split.percentage.toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+          )}
+
+          {type === "ratio" && (
+            <div className="flex items-center gap-2 flex-1">
+              <div className="flex-1"></div>
+              <div className="flex gap-1 items-center">
+                <span className="text-sm text-muted-foreground">Ratio:</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={ratios[split.userId] !== undefined ? ratios[split.userId] : 1}
+                  onChange={(e) =>
+                    updateRatioSplit(split.userId, e.target.value)
+                  }
+                  className="w-20 h-8"
+                />
+                <span className="text-sm text-muted-foreground ml-1">
+                  (₹{split.amount.toFixed(2)})
                 </span>
               </div>
             </div>
